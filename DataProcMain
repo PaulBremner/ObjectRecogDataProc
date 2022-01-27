@@ -1,0 +1,238 @@
+#grab answer csv
+#for each row
+    #convert to list
+    #if first row then find idx of first Q, then store list from X+3 onwards as QIDS
+    #if 4th row onwards then store X+3 as answer list
+#!/usr/bin/python
+
+import sys
+from csv import reader
+import csv
+import os
+
+try:
+    filename = sys.argv[1]
+except:
+    print('missing filename arg')
+    filename = "G:\Python_ws\ObjectRecorDataProc\\response_data\\PC1.csv"
+
+
+render_con = os.path.basename(filename).split('.')[0]#todo replace this with extracting the render con for the results filename, probably by renaming the results csv to being render_con.csv
+print(render_con)
+# read csv file as a list of lists
+with open(filename, 'r') as read_obj:
+    # pass the file object to reader() to get the reader object
+    csv_reader = reader(read_obj)
+    # Pass reader object to list() to get a list of lists
+    list_of_rows = list(csv_reader)
+
+list_of_questions = list_of_rows[0]
+list_of_rows = list_of_rows[3:]
+
+#find the idx of the first Q in the question row to set start point for answer and question rows
+for i, elem in enumerate(list_of_questions):
+    if 'Q' in elem:
+        start_Idx = i
+        break
+
+list_of_questions = list_of_questions[start_Idx+3:]
+
+for i in range(len(list_of_questions)):
+    if list_of_questions[i][0] == 'Q' and '_' not in list_of_questions[i]:
+        fqid = int(list_of_questions[i][1:])
+        subq = 1
+    elif list_of_questions[i][0] == 'Q':
+        list_of_questions[i] = 'Q' + str(fqid + subq) + list_of_questions[i][-2:]
+        if list_of_questions[i][-1] == '2':
+            subq += 1
+
+#print(list_of_questions)
+#exit()
+responses = []#this will just contain the survey responses
+#TODO add proc for demographics
+
+for row in list_of_rows:
+    row_cropped = row[start_Idx+3:]
+    responses.append(row_cropped)
+
+#print(responses[0])
+
+answers = []
+
+for participant in responses:#for each participant
+    answers.append({})  # append an empty answer dict to the list
+    for i in range(len(list_of_questions)):  # for all Q numbers
+        if participant[i] != '':#if they have answered a Q then add their response to the dict keyed by the Q number
+            answers[-1][list_of_questions[i]] = participant[i]
+
+
+#print(answers[0].keys())
+
+filename = "G:\RNE\\recog-study\Responses\scene_keys.csv"
+
+with open(filename, 'r') as read_obj:
+    # pass the file object to reader() to get the reader object
+    csv_reader = reader(read_obj)
+    # Pass reader object to list() to get a list of lists
+    list_of_rows = list(csv_reader)
+
+#scene keys is a dict with the condition as key and the list of image QID as values by searching the list you get the idx which corresponds to the scene number (+1 to the idx to get number from 1-12)
+scene_keys = {}
+list_of_rows = list_of_rows[1:]
+
+for row in list_of_rows:
+    scene_keys[row[1] + row[0]] = row[2:]
+
+#print(scene_keys.keys())
+
+filename = "G:\RNE\\recog-study\Responses\condition_keys.csv"
+
+with open(filename, 'r') as read_obj:
+    # pass the file object to reader() to get the reader object
+    csv_reader = reader(read_obj)
+    # Pass reader object to list() to get a list of lists
+    list_of_rows = list(csv_reader)
+
+condition_keys = {}
+list_of_rows = list_of_rows[1:]
+
+for row in list_of_rows:
+    if row[1] not in condition_keys.keys():
+        condition_keys[row[1]] = {}
+        #dict{RS:{FQID:[IMageID,Condition]}}
+    condition_keys[row[1]][row[3]] = [row[2],row[0]]
+#to get the condition for the current FQID, use the renderstyle to key into the dict, then use the FQID to key in to the sub-dict, then list[0] is the ImageID, list[1] is the other part of the condition (which is needed for the scene look up to get the dictkey, by concatenating the two condition stirngs, in which to search for the FQID)
+
+#print(condition_keys['PC1']['Q136'])
+
+filename = "G:\RNE\\recog-study\Responses\scene_objects.csv"
+
+with open(filename, 'r') as read_obj:
+    # pass the file object to reader() to get the reader object
+    csv_reader = reader(read_obj)
+    # Pass reader object to list() to get a list of lists
+    list_of_rows = list(csv_reader)
+
+scene_objects = {}
+list_of_rows = list_of_rows[1:]
+
+#scene_objects{ID:{Objects:[], Location:[]}}
+#for scene ID search the object list for each answer, check the matching idx in the location list for location match
+for row in list_of_rows:
+    if row[0] not in scene_objects.keys():
+        scene_objects[row[0]] = {'Objects': [], 'Location': []}
+
+    scene_objects[row[0]]['Objects'].append(row[1])
+    scene_objects[row[0]]['Location'].append(row[2])
+
+#print(scene_objects['1'])
+
+#results needs to have % correct answers per condition for each participant
+#results = {condition_key:{'objectID':[% correct answers of each participant], 'locationID':[% correct answers of each participant], 'object_and_location':[% correct answers of each participant]}
+#each participants answer % for a particular condition needs to be a mean of the 3 trials in that condition
+#to do this need a results dict for a participant to contain lists of all their correct answers, then calulate their mean and add it to the row for that participant
+results = {}
+
+for p in range(len(answers)):#for each participant
+    results_p = {}
+    #for each FirstQID in the list for this condition
+
+    for FQID in condition_keys[render_con].keys():
+        QValue = int(FQID[1:])
+        searchkeys = ["Q" + str(QValue)]
+        for i in range(1,5):
+            for j in range(1,3):
+                searchkeys.append("Q" + str(QValue + i)+'_' + str(j))
+        #search answers for the current question set
+        res = dict(filter(lambda item: any(key == item[0] for key in searchkeys), answers[p].items()))#res contains the answers to one q block of 1 participant
+        if len(res) != 0:
+            percent_correct_O = 0#% correct is per scene so init to 0 at start of scene check
+            percent_correct_L = 0
+            percent_correct_OL = 0
+            #print(res)
+            condition = render_con + condition_keys[render_con][FQID][1]
+            #print(condition)
+            scene = scene_keys[condition].index(condition_keys[render_con][FQID][0]) + 1# scene = the scene number for the scene that the current question answer dictionary is referring to
+
+            for so in range(len(scene_objects[str(scene)]['Objects'])):#so is an integer from 0 to length of the list of objects in the scene to be checked
+                try:
+                    o_answer_idx = list(res.values()).index(scene_objects[str(scene)]['Objects'][so])#look in the results for the object at the current index
+                    #need to calculate the total number of correct answers for the scene, then at the end of the scene calculate percentage of correct answers using the length of the scene objects list as the max number of correct answers
+                except ValueError:
+                    o_answer_idx = -1
+
+                try:
+                    l_answer_idx = list(res.values()).index(scene_objects[str(scene)]['Location'][so])#look in the results for the location at the current index
+                    #need to calculate the total number of correct answers for the scene, then at the end of the scene calculate percentage of correct answers using the length of the scene objects list as the max number of correct answers
+                except ValueError:
+                    l_answer_idx = -1
+
+                if o_answer_idx >= 0:
+                    percent_correct_O += 1  # if the object is there increment the correct answer value (percentage correct to be calculated at the end of the scene)
+
+                if l_answer_idx >= 0:
+                    percent_correct_L += 1
+
+                if o_answer_idx == l_answer_idx:
+                    percent_correct_OL += 1
+
+            percent_correct_O /= len(scene_objects[str(scene)]['Objects'])
+            percent_correct_L /= len(scene_objects[str(scene)]['Objects'])
+            percent_correct_OL /= len(scene_objects[str(scene)]['Objects'])
+            #print('percent_correct_O =' + str(percent_correct_O))#this looks right, do some extra checks to be sure
+            #exit()
+
+            if condition not in results_p.keys():
+                results_p[condition] = { 'object': [], 'location': [], 'object_and_location': []}
+
+            results_p[condition]['object'].append(percent_correct_O)
+            results_p[condition]['location'].append(percent_correct_L)
+            results_p[condition]['object_and_location'].append(percent_correct_OL)
+
+    #for c in results_p.keys():
+    #    for res in results_p[c]['object']:
+    #        print(c + ' ' + str(res))
+
+    #to get the mean need to step through the participant result conditions and then through the answer percentages to calculate the mean and assign it to a row for that participant in the answer dict
+    for c in results_p.keys():#after all means are calculated step through all conditions they answered qs on
+        percent_correct_mean_O = 0#means are done per condition and then stored so init at the start of each condition loop
+        percent_correct_mean_L = 0
+        percent_correct_mean_OL = 0
+        for r in range(len(results_p[c]['object'])):#this assumes all 3 result lists are the same length which should be true
+            #sum all the results for the current condition
+            percent_correct_mean_O += results_p[c]['object'][r]
+            percent_correct_mean_L += results_p[c]['location'][r]
+            percent_correct_mean_OL += results_p[c]['object_and_location'][r]
+
+        #calculate the means
+        percent_correct_mean_O /= len(results_p[c]['object'])
+        percent_correct_mean_L /= len(results_p[c]['location'])
+        percent_correct_mean_OL /= len(results_p[c]['object_and_location'])
+
+        #store the results for the participant for the current condition
+        if c not in results.keys():#if the first results for a condition create the results dict for that condition
+            results[c] = {'PID': [], 'object':[], 'location':[], 'object_and_location':[]}
+        # results = {condition_key:{'objectID':[% correct answers of each participant], 'locationID':[% correct answers of each participant], 'object_and_location':[% correct answers of each participant]}
+        results[c]['PID'].append(p)
+        results[c]['object'].append(percent_correct_mean_O)
+        results[c]['location'].append(percent_correct_mean_L)
+        results[c]['object_and_location'].append(percent_correct_mean_OL)
+
+#for c in results.keys():
+#    print(results[c])
+#exit()
+
+#to simplify output csv, have a seerate file for each condition
+
+for c in results.keys():
+    csv_file = c + ".csv"
+    csv_columns = list(results[c].keys())
+    rows = zip(results[c]['PID'], results[c]['object'], results[c]['location'], results[c]['object_and_location'])
+    try:
+        with open(csv_file, "w", newline='', encoding='utf-8') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(csv_columns)
+            for row in rows:
+                writer.writerow(row)
+    except IOError:
+        print("I/O error")
